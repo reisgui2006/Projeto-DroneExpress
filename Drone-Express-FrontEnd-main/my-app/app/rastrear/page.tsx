@@ -2,7 +2,76 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { entregasApi, type RastreioPublic } from "@/lib/api";
+import { entregasApi, avaliacoesApi, type RastreioPublic } from "@/lib/api";
+
+function Estrelas({ nota }: { nota: number }) {
+  return (
+    <span aria-label={`${nota} de 5 estrelas`} style={{ color: "var(--accent)", fontSize: "1.25rem", letterSpacing: "0.1em" }}>
+      {"★".repeat(nota)}<span style={{ color: "var(--card-border)" }}>{"★".repeat(5 - nota)}</span>
+    </span>
+  );
+}
+
+function AvaliarEntrega({ resultado, onAvaliado }: {
+  resultado: RastreioPublic; onAvaliado: (r: RastreioPublic) => void;
+}) {
+  const [nota, setNota]             = useState(0);
+  const [comentario, setComentario] = useState("");
+  const [enviando, setEnviando]     = useState(false);
+  const [erro, setErro]             = useState<string | null>(null);
+
+  if (resultado.avaliacao) {
+    return (
+      <div style={{ marginTop: "1.25rem", background: "var(--bg)", borderRadius: "0.625rem", padding: "0.75rem 1rem" }}>
+        <p style={{ fontSize: "0.6875rem", color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>
+          Sua avaliação
+        </p>
+        <Estrelas nota={resultado.avaliacao.nota} />
+        {resultado.avaliacao.comentario && (
+          <p style={{ fontSize: "0.875rem", marginTop: "0.25rem", whiteSpace: "pre-wrap" }}>{resultado.avaliacao.comentario}</p>
+        )}
+      </div>
+    );
+  }
+
+  async function enviar(e: React.FormEvent) {
+    e.preventDefault();
+    if (nota < 1) { setErro("Escolha uma nota de 1 a 5 estrelas."); return; }
+    setEnviando(true);
+    setErro(null);
+    try {
+      const avaliacao = await avaliacoesApi.avaliar(resultado.codigo_rastreio, nota, comentario.trim());
+      onAvaliado({ ...resultado, avaliacao });
+    } catch (err: unknown) {
+      setErro(err instanceof Error ? err.message : "Não foi possível enviar a avaliação.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <form onSubmit={enviar} style={{ marginTop: "1.25rem", background: "var(--bg)", borderRadius: "0.625rem",
+      padding: "0.875rem 1rem", display: "flex", flexDirection: "column", gap: "0.625rem" }}>
+      <p style={{ fontWeight: 700, fontSize: "0.9375rem" }}>⭐ Avalie esta entrega</p>
+      <div role="radiogroup" aria-label="Nota" style={{ display: "flex", gap: "0.25rem" }}>
+        {[1, 2, 3, 4, 5].map(n => (
+          <button key={n} type="button" role="radio" aria-checked={nota === n} aria-label={`${n} estrela${n > 1 ? "s" : ""}`}
+            onClick={() => { setNota(n); setErro(null); }}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: "0 0.125rem",
+              fontSize: "1.75rem", lineHeight: 1, color: n <= nota ? "var(--accent)" : "var(--card-border)" }}>
+            ★
+          </button>
+        ))}
+      </div>
+      <textarea className="input" rows={2} maxLength={500} placeholder="Comentário (opcional)"
+        aria-label="Comentário" value={comentario} onChange={e => setComentario(e.target.value)} />
+      {erro && <p role="alert" style={{ color: "#991b1b", fontSize: "0.8125rem" }}>⚠️ {erro}</p>}
+      <button className="btn btn-primary" type="submit" disabled={enviando}>
+        {enviando ? "Enviando…" : "Enviar avaliação"}
+      </button>
+    </form>
+  );
+}
 
 function statusClass(status: string) {
   const s = status.toLowerCase();
@@ -237,6 +306,10 @@ export default function RastrearPage() {
               style={{ marginTop: "1.25rem" }}>
               ↩️ Solicitar devolução desta entrega
             </Link>
+          )}
+
+          {resultado.status.trim().toLowerCase() === "entregue" && (
+            <AvaliarEntrega key={resultado.codigo_rastreio} resultado={resultado} onAvaliado={setResultado} />
           )}
         </div>
       )}

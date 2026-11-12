@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from fastapi.middleware.cors import CORSMiddleware
 from io import BytesIO
@@ -20,6 +21,8 @@ from .schemas import (
     EntregaSchema, EntregaPublic, EntregaList, EntregaUpdate, AssociarProdutosSchema,
     ProdutoSchema, ProdutoPublic, ProdutoList, ProdutoUpdate,
     DevolucaoCreate, DevolucaoPublic, DevolucaoList, DevolucaoStatusUpdate,
+    ChamadoCreate, ChamadoResposta, ChamadoPublic, ChamadoList,
+    AvaliacaoCreate, AvaliacaoPublic, AvaliacaoEmpresaList,
     RastreioPublic, ProdutoRastreioPublic,
     Message,
 )
@@ -342,6 +345,7 @@ def rastrear_entrega(codigo: str, db: Session = Depends(get_db)):
             )
             for p in obj.produtos
         ],
+        avaliacao=obj.avaliacao,
     )
 
 
@@ -480,6 +484,131 @@ def update_devolucao_status(
     db.commit()
     db.refresh(obj)
     return obj
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SUPORTE — chamados abertos pelo cliente sobre uma entrega
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/chamados/", response_model=ChamadoPublic, status_code=201, tags=["Suporte"])
+def create_chamado(chamado: ChamadoCreate, db: Session = Depends(get_db)):
+    codigo = chamado.codigo_rastreio.upper()
+    entrega = db.query(models.Entrega).filter_by(codigo_rastreio=codigo).first()
+    if not entrega:
+        raise HTTPException(status_code=404, detail="Código de rastreio não encontrado")
+
+    obj = models.Chamado(
+        id_entrega=entrega.id_entrega,
+        nome=chamado.nome,
+        email=chamado.email.lower(),
+        assunto=chamado.assunto,
+        mensagem=chamado.mensagem,
+        status="Aberto",
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@app.get("/chamados/", response_model=ChamadoList, tags=["Suporte"])
+def read_chamados_cliente(email: str, db: Session = Depends(get_db)):
+    """Lista os chamados do cliente pelo e-mail informado na abertura."""
+    chamados = (
+        db.query(models.Chamado)
+        .options(joinedload(models.Chamado.entrega))
+        .filter(models.Chamado.email == email.strip().lower())
+        .order_by(models.Chamado.data_abertura.desc())
+        .all()
+    )
+    return {"chamados": chamados}
+
+
+@app.get("/empresas/{empresa_id}/chamados/", response_model=ChamadoList, tags=["Suporte"])
+def read_chamados_empresa(empresa_id: int, db: Session = Depends(get_db)):
+    if not db.query(models.Empresa).filter_by(id_empresa=empresa_id).first():
+        raise HTTPException(status_code=404, detail="Empresa não encontrada")
+    chamados = (
+        db.query(models.Chamado)
+        .join(models.Entrega)
+        .options(joinedload(models.Chamado.entrega))
+        .filter(models.Entrega.id_empresa == empresa_id)
+        .order_by(models.Chamado.data_abertura.desc())
+        .all()
+    )
+    return {"chamados": chamados}
+
+
+@app.patch("/chamados/{chamado_id}/responder", response_model=ChamadoPublic, tags=["Suporte"])
+def responder_chamado(
+    chamado_id: int,
+    empresa_id: int,
+    body: ChamadoResposta,
+    db: Session = Depends(get_db),
+):
+    obj = db.query(models.Chamado).filter_by(id_chamado=chamado_id).first()
+    if not obj or obj.entrega.id_empresa != empresa_id:
+        raise HTTPException(status_code=404, detail="Chamado não encontrado")
+    if obj.status != "Aberto":
+        raise HTTPException(status_code=400, detail="Este chamado já foi respondido")
+
+    obj.resposta = body.resposta
+    obj.status = "Respondido"
+    obj.data_resposta = models.utcnow()
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AVALIAÇÕES — nota de 1 a 5 dada pelo cliente após a entrega (uma por entrega)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.post(
+    "/entregas/rastrear/{codigo}/avaliacao",
+    response_model=AvaliacaoPublic,
+    status_code=201,
+    tags=["Avaliações"],
+)
+def avaliar_entrega(codigo: str, body: AvaliacaoCreate, db: Session = Depends(get_db)):
+    entrega = db.query(models.Entrega).filter_by(codigo_rastreio=codigo.strip().upper()).first()
+    if not entrega:
+        raise HTTPException(status_code=404, detail="Código de rastreio não encontrado")
+    if entrega.status.strip().casefold() != "entregue":
+        raise HTTPException(status_code=400, detail="A avaliação só pode ser feita após a entrega")
+    if entrega.avaliacao:
+        raise HTTPException(status_code=409, detail="Esta entrega já foi avaliada")
+
+    obj = models.Avaliacao(
+        id_entrega=entrega.id_entrega,
+        nota=body.nota,
+        comentario=body.comentario or None,   # comentário vazio vira None
+    )
+    db.add(obj)
+    try:
+        db.commit()
+    except IntegrityError:   # duas avaliações enviadas ao mesmo tempo
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Esta entrega já foi avaliada")
+    db.refresh(obj)
+    return obj
+
+
+@app.get("/empresas/{empresa_id}/avaliacoes/", response_model=AvaliacaoEmpresaList, tags=["Avaliações"])
+def read_avaliacoes_empresa(empresa_id: int, db: Session = Depends(get_db)):
+    if not db.query(models.Empresa).filter_by(id_empresa=empresa_id).first():
+        raise HTTPException(status_code=404, detail="Empresa não encontrada")
+    avaliacoes = (
+        db.query(models.Avaliacao)
+        .join(models.Entrega)
+        .options(joinedload(models.Avaliacao.entrega))
+        .filter(models.Entrega.id_empresa == empresa_id)
+        .order_by(models.Avaliacao.data_avaliacao.desc())
+        .all()
+    )
+    total = len(avaliacoes)
+    media = round(sum(a.nota for a in avaliacoes) / total, 1) if total else None
+    return {"avaliacoes": avaliacoes, "total": total, "media": media}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

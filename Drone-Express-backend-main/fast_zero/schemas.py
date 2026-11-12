@@ -176,6 +176,62 @@ class DevolucaoStatusUpdate(BaseModel):
     status: Literal["Aprovada", "Recusada"]
 
 
+# ─── Suporte (chamados) ───────────────────────────────────────────────────────
+
+TextoObrigatorio = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+class ChamadoCreate(BaseModel):
+    nome:            TextoObrigatorio
+    email:           EmailStr
+    codigo_rastreio: TextoObrigatorio
+    assunto:         Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
+    mensagem:        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+
+class ChamadoResposta(BaseModel):
+    resposta: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+
+class ChamadoPublic(BaseModel):
+    id_chamado:      int
+    id_entrega:      int
+    codigo_rastreio: str
+    nome:            str
+    email:           str
+    assunto:         str
+    mensagem:        str
+    status:          str
+    resposta:        Optional[str]
+    data_abertura:   datetime
+    data_resposta:   Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
+
+class ChamadoList(BaseModel):
+    chamados: list[ChamadoPublic]
+
+
+# ─── Avaliação da entrega ─────────────────────────────────────────────────────
+
+class AvaliacaoCreate(BaseModel):
+    nota:       int = Field(ge=1, le=5)
+    comentario: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]] = None
+
+class AvaliacaoPublic(BaseModel):
+    nota:           int
+    comentario:     Optional[str]
+    data_avaliacao: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class AvaliacaoEmpresaPublic(AvaliacaoPublic):
+    id_avaliacao:    int
+    codigo_rastreio: str
+
+class AvaliacaoEmpresaList(BaseModel):
+    avaliacoes: list[AvaliacaoEmpresaPublic]
+    total:      int
+    media:      Optional[float]   # None quando ainda não há avaliações
+
+
 # ─── Rastreio público (endpoint /rastrear) ────────────────────────────────────
 
 class ProdutoRastreioPublic(BaseModel):
@@ -192,6 +248,7 @@ class RastreioPublic(BaseModel):
     datahorainicio:    datetime
     datahoraconclusao: Optional[datetime]
     produtos:          list[ProdutoRastreioPublic]
+    avaliacao:         Optional[AvaliacaoPublic] = None
 
 
 # ─── Utilitários ──────────────────────────────────────────────────────────────

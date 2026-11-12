@@ -80,6 +80,12 @@ class Entrega(Base):
     devolucoes = relationship(
         "Devolucao", back_populates="entrega", cascade="all, delete-orphan"
     )
+    chamados = relationship(
+        "Chamado", back_populates="entrega", cascade="all, delete-orphan"
+    )
+    avaliacao = relationship(
+        "Avaliacao", back_populates="entrega", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 @event.listens_for(Entrega, "before_insert")
@@ -127,3 +133,44 @@ class Devolucao(Base):
     produtos = relationship(
         "Produto", secondary=devolucao_produtos, back_populates="devolucoes"
     )
+
+class Chamado(Base):
+    """Chamado de suporte aberto pelo cliente sobre uma entrega.
+
+    A empresa responsável é a dona da entrega (entrega.id_empresa).
+    """
+    __tablename__ = "chamados"
+
+    id_chamado    = Column(Integer, primary_key=True)
+    id_entrega    = Column(Integer, ForeignKey("entregas.id_entrega"), index=True, nullable=False)
+    nome          = Column(String, nullable=False)
+    email         = Column(String, nullable=False, index=True)
+    assunto       = Column(String, nullable=False)
+    mensagem      = Column(String, nullable=False)
+    status        = Column(String, default="Aberto", nullable=False)  # Aberto | Respondido
+    resposta      = Column(String, nullable=True)
+    data_abertura = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    data_resposta = Column(DateTime(timezone=True), nullable=True)
+
+    entrega = relationship("Entrega", back_populates="chamados")
+
+    @property
+    def codigo_rastreio(self) -> str:
+        return self.entrega.codigo_rastreio
+
+
+class Avaliacao(Base):
+    """Avaliação (nota 1 a 5) feita pelo cliente após a entrega. Uma por entrega."""
+    __tablename__ = "avaliacoes"
+
+    id_avaliacao   = Column(Integer, primary_key=True)
+    id_entrega     = Column(Integer, ForeignKey("entregas.id_entrega"), unique=True, nullable=False)
+    nota           = Column(Integer, nullable=False)
+    comentario     = Column(String, nullable=True)
+    data_avaliacao = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    entrega = relationship("Entrega", back_populates="avaliacao")
+
+    @property
+    def codigo_rastreio(self) -> str:
+        return self.entrega.codigo_rastreio

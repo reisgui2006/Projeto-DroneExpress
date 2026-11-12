@@ -90,6 +90,9 @@ export default function Home() {
             <Link href="/devolucoes" className="btn btn-outline w-full">
               ↩️&nbsp; Solicitar devolução / Minhas Devoluções
             </Link>
+            <Link href="/suporte" className="btn btn-outline w-full">
+              💬&nbsp; Suporte
+            </Link>
             <Link href="/empresa/login" className="btn btn-outline w-full">
               🏢&nbsp; Login Empresa
             </Link>

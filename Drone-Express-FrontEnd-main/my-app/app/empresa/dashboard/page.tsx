@@ -3,8 +3,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  entregasApi, produtosApi, consumidoresApi, devolucoesApi,
-  type Empresa, type Entrega, type Produto, type Consumidor, type Devolucao,
+  entregasApi, produtosApi, consumidoresApi, devolucoesApi, suporteApi, avaliacoesApi,
+  type Empresa, type Entrega, type Produto, type Consumidor, type Devolucao, type Chamado,
+  type AvaliacoesEmpresa,
   type EntregaInput, type EntregaUpdate,
   type ProdutoInput,
   type ConsumidorInput,
@@ -497,7 +498,9 @@ function RelatorioTab({ empresa, entregas, produtos, consumidores }: {
 }
 
 
-type Tab = "consumidores" | "produtos" | "entregas" | "devolucoes" | "relatorio";
+type Tab = "consumidores" | "produtos" | "entregas" | "devolucoes" | "suporte" | "avaliacoes" | "relatorio";
+
+const AVALIACOES_VAZIO: AvaliacoesEmpresa = { avaliacoes: [], total: 0, media: null };
 type ModalState =
   | { type: "novo-consumidor" }
   | { type: "editar-consumidor"; consumidor: Consumidor }
@@ -516,7 +519,11 @@ export default function EmpresaDashboardPage() {
   const [devolucoes, setDevolucoes]         = useState<Devolucao[]>([]);
   const [devolucaoEntregaFiltro, setDevolucaoEntregaFiltro] = useState<number | null>(null);
   const [devolucaoEmAtualizacao, setDevolucaoEmAtualizacao] = useState<number | null>(null);
-  const [loading, setLoading]               = useState(true);
+  const [chamados, setChamados]             = useState<Chamado[]>([]);
+  const [respostas, setRespostas]           = useState<Record<number, string>>({});
+  const [chamadoEmResposta, setChamadoEmResposta] = useState<number | null>(null);
+  const [avaliacoes, setAvaliacoes]         = useState<AvaliacoesEmpresa>(AVALIACOES_VAZIO);
+  const [loading, setLoading]              = useState(true);
   const [tab, setTab]                       = useState<Tab>("consumidores"); // começa em consumidores
   const [modal, setModal]                   = useState<ModalState | null>(null);
   const [confirm, setConfirm]               = useState<{ msg: string; action: () => void } | null>(null);
@@ -546,6 +553,24 @@ export default function EmpresaDashboardPage() {
         setDevolucoes([]);
         showToast(
           e instanceof Error ? `Dados carregados, mas devoluções indisponíveis: ${e.message}` : "Não foi possível carregar as devoluções.",
+          "error",
+        );
+      }
+      try {
+        setChamados(await suporteApi.listarEmpresa(emp.id_empresa));
+      } catch (e: unknown) {
+        setChamados([]);
+        showToast(
+          e instanceof Error ? `Dados carregados, mas suporte indisponível: ${e.message}` : "Não foi possível carregar os chamados.",
+          "error",
+        );
+      }
+      try {
+        setAvaliacoes(await avaliacoesApi.listarEmpresa(emp.id_empresa));
+      } catch (e: unknown) {
+        setAvaliacoes(AVALIACOES_VAZIO);
+        showToast(
+          e instanceof Error ? `Dados carregados, mas avaliações indisponíveis: ${e.message}` : "Não foi possível carregar as avaliações.",
           "error",
         );
       }
@@ -582,6 +607,22 @@ export default function EmpresaDashboardPage() {
     }
   }
 
+  async function responderChamado(chamado: Chamado) {
+    const resposta = (respostas[chamado.id_chamado] ?? "").trim();
+    if (!resposta) { showToast("Escreva uma resposta antes de enviar.", "error"); return; }
+    setChamadoEmResposta(chamado.id_chamado);
+    try {
+      await suporteApi.responder(chamado.id_chamado, empresa!.id_empresa, resposta);
+      setRespostas(r => { const novo = { ...r }; delete novo[chamado.id_chamado]; return novo; });
+      showToast("Resposta enviada.");
+      await carregar(empresa!);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Erro ao responder o chamado.", "error");
+    } finally {
+      setChamadoEmResposta(null);
+    }
+  }
+
   if (!empresa) return null;
 
   const produtosPorEntrega = (id: number) => produtos.filter(p => p.id_entrega === id);
@@ -595,6 +636,8 @@ export default function EmpresaDashboardPage() {
     { key: "produtos",     label: "📦 Produtos",     count: produtos.length     },
     { key: "entregas",     label: "🚁 Entregas",     count: entregas.length     },
     { key: "devolucoes",   label: "↩️ Devoluções",   count: devolucoes.length   },
+    { key: "suporte",      label: "💬 Suporte",      count: chamados.filter(c => c.status === "Aberto").length },
+    { key: "avaliacoes",   label: "⭐ Avaliações",   count: avaliacoes.total },
     { key: "relatorio",    label: "📊 Relatório",    count: null                },
   ];
 
@@ -973,6 +1016,100 @@ export default function EmpresaDashboardPage() {
                     </button>
                   </div>
                 )}
+              </article>
+            ))}
+          </div>
+        )}
+
+        {/* ── SUPORTE ── */}
+        {!loading && tab === "suporte" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            {chamados.length === 0 && (
+              <div className="card" style={{ textAlign: "center", padding: "3rem", color: "var(--muted)" }}>
+                <p style={{ fontSize: "2rem" }}>💬</p>
+                <p style={{ fontWeight: 600, marginTop: "0.5rem" }}>Nenhum chamado de suporte</p>
+              </div>
+            )}
+            {chamados.map(c => (
+              <article key={c.id_chamado} className="card animate-fade-up"
+                style={{ padding: "1rem 1.25rem", display: "flex", flexDirection: "column", gap: "0.625rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem" }}>
+                  <div>
+                    <p style={{ fontWeight: 800 }}>#{c.id_chamado} · {c.assunto}</p>
+                    <p style={{ fontSize: "0.75rem", color: "var(--muted)", fontFamily: "var(--font-geist-mono)" }}>
+                      {c.codigo_rastreio} · {fmt(c.data_abertura)}
+                    </p>
+                  </div>
+                  <span className={c.status === "Respondido" ? "badge badge-entregue" : "badge badge-pendente"}>
+                    {c.status}
+                  </span>
+                </div>
+                <p style={{ fontSize: "0.875rem" }}>
+                  <strong>Cliente:</strong> {c.nome} ({c.email})
+                </p>
+                <p style={{ fontSize: "0.875rem", whiteSpace: "pre-wrap" }}>{c.mensagem}</p>
+                {c.status === "Respondido" ? (
+                  <div style={{ background: "var(--bg)", borderRadius: "0.5rem", padding: "0.625rem 0.75rem" }}>
+                    <p style={{ fontSize: "0.6875rem", color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>
+                      Sua resposta · {fmt(c.data_resposta)}
+                    </p>
+                    <p style={{ fontSize: "0.875rem", whiteSpace: "pre-wrap" }}>{c.resposta}</p>
+                  </div>
+                ) : (
+                  <form onSubmit={e => { e.preventDefault(); responderChamado(c); }}
+                    style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <textarea className="input" rows={3} maxLength={2000} required
+                      placeholder="Escreva a resposta para o cliente" aria-label="Resposta"
+                      value={respostas[c.id_chamado] ?? ""}
+                      onChange={e => setRespostas(r => ({ ...r, [c.id_chamado]: e.target.value }))} />
+                    <button type="submit" className="btn btn-primary" style={{ alignSelf: "flex-start" }}
+                      disabled={chamadoEmResposta !== null}>
+                      {chamadoEmResposta === c.id_chamado ? "Enviando…" : "Responder"}
+                    </button>
+                  </form>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+
+        {/* ── AVALIAÇÕES ── */}
+        {!loading && tab === "avaliacoes" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            {avaliacoes.total === 0 ? (
+              <div className="card" style={{ textAlign: "center", padding: "3rem", color: "var(--muted)" }}>
+                <p style={{ fontSize: "2rem" }}>⭐</p>
+                <p style={{ fontWeight: 600, marginTop: "0.5rem" }}>Nenhuma avaliação ainda</p>
+                <p style={{ fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                  Os clientes podem avaliar pela tela de rastreio depois que a entrega for marcada como Entregue.
+                </p>
+              </div>
+            ) : (
+              <div className="card" style={{ textAlign: "center", padding: "1.25rem" }}>
+                <p style={{ fontSize: "0.6875rem", color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>
+                  Nota média
+                </p>
+                <p style={{ fontSize: "2.25rem", fontWeight: 900, letterSpacing: "-0.03em", color: "var(--accent)" }}>
+                  {avaliacoes.media?.toFixed(1).replace(".", ",")} ★
+                </p>
+                <p style={{ fontSize: "0.8125rem", color: "var(--muted)" }}>
+                  {avaliacoes.total} avaliaç{avaliacoes.total > 1 ? "ões" : "ão"}
+                </p>
+              </div>
+            )}
+            {avaliacoes.avaliacoes.map(a => (
+              <article key={a.id_avaliacao} className="card animate-fade-up"
+                style={{ padding: "1rem 1.25rem", display: "flex", flexDirection: "column", gap: "0.375rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
+                  <p style={{ fontFamily: "var(--font-geist-mono)", fontWeight: 800 }}>{a.codigo_rastreio}</p>
+                  <span aria-label={`${a.nota} de 5 estrelas`} style={{ color: "var(--accent)", fontSize: "1.125rem" }}>
+                    {"★".repeat(a.nota)}<span style={{ color: "var(--card-border)" }}>{"★".repeat(5 - a.nota)}</span>
+                  </span>
+                </div>
+                {a.comentario
+                  ? <p style={{ fontSize: "0.875rem", whiteSpace: "pre-wrap" }}>{a.comentario}</p>
+                  : <p style={{ fontSize: "0.8125rem", color: "var(--muted)" }}>Sem comentário</p>}
+                <p style={{ fontSize: "0.75rem", color: "var(--muted)" }}>Avaliada em {fmt(a.data_avaliacao)}</p>
               </article>
             ))}
           </div>

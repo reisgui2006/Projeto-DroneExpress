@@ -55,6 +55,24 @@ export interface RastreioPublic {
   datahorainicio:    string;
   datahoraconclusao: string | null;
   produtos: { nome_produto: string; peso: number; categoria: string }[];
+  avaliacao: Avaliacao | null;
+}
+
+export interface Avaliacao {
+  nota:           number;
+  comentario:     string | null;
+  data_avaliacao: string;
+}
+
+export interface AvaliacaoEmpresa extends Avaliacao {
+  id_avaliacao:    number;
+  codigo_rastreio: string;
+}
+
+export interface AvaliacoesEmpresa {
+  avaliacoes: AvaliacaoEmpresa[];
+  total:      number;
+  media:      number | null;
 }
 
 export interface Devolucao {
@@ -225,4 +243,36 @@ export const devolucoesApi = {
       body: JSON.stringify({ status }),
       },
     ),
+};
+
+export interface Chamado {
+  id_chamado:      number;
+  id_entrega:      number;
+  codigo_rastreio: string;
+  nome:            string;
+  email:           string;
+  assunto:         string;
+  mensagem:        string;
+  status:          "Aberto" | "Respondido";
+  resposta:        string | null;
+  data_abertura:   string;
+  data_resposta:   string | null;
+}
+
+export type ChamadoInput = { nome: string; email: string; codigo_rastreio: string; assunto: string; mensagem: string };
+
+export const suporteApi = {
+  abrir:         (b: ChamadoInput)  => request<Chamado>("/chamados/", { method: "POST", body: JSON.stringify(b) }),
+  listarCliente: (email: string)    => request<{ chamados: Chamado[] }>(`/chamados/?email=${encodeURIComponent(email.trim())}`).then(r => r.chamados),
+  listarEmpresa: (empresaId: number) => request<{ chamados: Chamado[] }>(`/empresas/${empresaId}/chamados/`).then(r => r.chamados),
+  responder:     (id: number, empresaId: number, resposta: string) =>
+    request<Chamado>(`/chamados/${id}/responder?empresa_id=${empresaId}`, { method: "PATCH", body: JSON.stringify({ resposta }) }),
+};
+
+export const avaliacoesApi = {
+  avaliar:       (codigo: string, nota: number, comentario: string) =>
+    request<Avaliacao>(`/entregas/rastrear/${encodeURIComponent(codigo.trim().toUpperCase())}/avaliacao`, {
+      method: "POST", body: JSON.stringify({ nota, comentario }),
+    }),
+  listarEmpresa: (empresaId: number) => request<AvaliacoesEmpresa>(`/empresas/${empresaId}/avaliacoes/`),
 };
